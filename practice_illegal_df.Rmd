@@ -1,0 +1,328 @@
+---
+title: "practice illegal df"
+author: "Alex Reed"
+date: "2023-05-20"
+output: html_document
+---
+
+```{r}
+# Load packages
+library(sf)
+library(tidyverse)
+library(terra) 
+library(tmap)
+library(leaflet.extras)
+library(ggplot2)
+library(exactextractr)
+library(units)
+library(tictoc)
+library(grDevices)
+library(plotly)
+library(forcats)
+library(RColorBrewer)
+library(htmltools) #don't think I am using
+library(maps)
+library(maptools)
+library(sp)
+library(ggiraph)
+library(ggiraphExtra)
+
+#leafdown
+library(leafdown)
+library(leaflet)
+library(shiny)
+library(dplyr)
+library(shinycssloaders)
+library(shinyjs)
+library(dplyr)
+library(raster)
+```
+
+```{r}
+combined_illegal_df_by_dist <- read_rds("~/../../capstone/pyforest/lup_assessment_data/compliance_results/combined_illegal_df_by_dist.rds")
+combined_illegal_df_by_dpto <- read_rds("~/../../capstone/pyforest/lup_assessment_data/compliance_results/combined_illegal_df_by_dpto.rds")
+combined_illegal_df_by_dist <- st_transform(combined_illegal_df_by_dist, crs = "+proj=longlat +datum=WGS84")
+combined_illegal_df_by_dpto  <- st_transform(combined_illegal_df_by_dpto, crs = "+proj=longlat +datum=WGS84")
+```
+
+
+```{r}
+ui <- fluidPage(
+  tags$style(HTML(".leaflet-container {background: #ffffff;}")),
+  actionButton("drill_up", "View Departments"),
+  actionButton("drill_down", "View Districts"),
+  selectInput("year_range", "Select Year Range", unique(combined_illegal_df_by_dpto$year_range)),
+  leafletOutput("leafdown", height = "600px"),
+  plotlyOutput("illegalPlot"),
+  plotlyOutput("areaPlot")
+)
+
+```
+
+
+```{r}
+pyforest_palette <- c("#4B5F43", "#AEBD93", "#F6AE2D", "#F26419")
+# Define color palette
+# my_palette_dist <- colorNumeric(palette = pyforest_palette, domain = combined_illegal_df_by_dist$sum_df_ha, n = 4)
+# my_palette_dpto <- colorNumeric(palette = pyforest_palette, domain = combined_illegal_df_by_dpto$sum_df_ha, n = 4)
+
+```
+
+```{r}
+# Create Server
+server <- function(input, output) {
+  
+  # Function to filter data by year range
+  filter_data <- function(data) {
+    data %>% filter(year_range == input$year_range)
+  }
+
+  data_reactive <- reactive({
+    if (input$drill_down == 0 && input$drill_up == 0) {
+      filter_data(combined_illegal_df_by_dpto)
+    } else if (input$drill_down > 0) {
+      filter_data(combined_illegal_df_by_dist)
+    } else {
+      filter_data(combined_illegal_df_by_dpto)
+    }
+  })
+
+  output$leafdown <- renderLeaflet({
+    data <- data_reactive()
+    my_palette_dpto <- colorNumeric(palette = pyforest_palette, domain = data$sum_df_ha)
+    leaflet() %>%
+      addProviderTiles("CartoDB.Positron") %>%
+      addPolygons(
+        data = data,
+        fillColor = ~my_palette_dpto(data$sum_df_ha),
+        fillOpacity = 0.8,
+        color = "#BDBDC3",
+        weight = 1,
+        opacity = 1,
+        highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+        label = ~paste0(
+          "Department: ", nom_dpto,
+          "<br>Illegal Deforestation: ", round(sum_df_ha), " ha",
+          "<br>Number of properties: ", num_put_id,
+          "<br>Number of properties with illegal deforestation: ", num_illegal_props 
+        ) %>% lapply(HTML)
+      ) %>%
+      addLegend(
+        pal = my_palette_dpto,
+        values = data$sum_df_ha,
+        title = "Illegal Deforestation (ha)",
+        position = "bottomright"
+      )
+  })
+
+  observeEvent(input$drill_down, {
+    data <- data_reactive()
+    my_palette_dist <- colorNumeric(palette = pyforest_palette, domain = data$sum_df_ha)
+    leafletProxy("leafdown") %>% clearShapes() %>%
+      addPolygons(
+        data = data,
+        fillColor = ~my_palette_dist(data$sum_df_ha),
+        fillOpacity = 0.8,
+        color = "#BDBDC3",
+        weight = 1,
+        opacity = 1,
+        highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+        label = ~paste0(
+          "District: ", nom_dist,
+          "<br>Illegal Deforestation: ", round(sum_df_ha), " ha",
+          "<br>Number of properties: ", num_put_id,
+          "<br>Number of properties with illegal deforestation: ", num_illegal_props 
+        ) %>% lapply(HTML)
+      )
+  })
+
+  observeEvent(input$drill_up, {
+    data <- data_reactive()
+    my_palette_dpto <- colorNumeric(palette = pyforest_palette, domain = data$sum_df_ha)
+    leafletProxy("leafdown") %>% clearShapes() %>%
+      addPolygons(
+        data = data,
+        fillColor = ~my_palette_dpto(data$sum_df_ha),
+        fillOpacity = 0.8,
+        color = "#BDBDC3",
+        weight = 1,
+        opacity = 1,
+        highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+        label = ~paste0(
+          "Department: ", nom_dpto,
+          "<br>Illegal Deforestation: ", round(sum_df_ha), " ha",
+          "<br>Number of properties: ", num_put_id,
+          "<br>Number of properties with illegal deforestation: ", num_illegal_props 
+        ) %>% lapply(HTML)
+      )
+  })
+  
+  
+output$illegalPlot <- renderPlotly({
+  if (input$drill_down > 0) {
+    data <- filter_data(combined_illegal_df_by_dist)
+    p <- ggplot(data, aes(x = sum_df_ha, y = reorder(nom_dist, num_put_id), fill = sum_df_ha)) +
+      geom_bar(stat = "identity", aes(text = paste("Number of properties:", num_put_id, "<br>Illegal deforestation (ha):", round(sum_df_ha)))) +
+      scale_fill_gradientn(colors = pyforest_palette) +
+      ggtitle("Illegal Deforestation by District") +
+      xlab("Illegal Deforestation (hectares)") +
+      ylab("District") +
+      theme_bw() +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            legend.position = "right") +
+      labs(fill = "Illegal Deforestation")
+  } else {
+    data <- filter_data(combined_illegal_df_by_dpto)
+    p <- ggplot(data, aes(x = sum_df_ha, y = reorder(nom_dpto, num_put_id), fill = sum_df_ha)) +
+      geom_bar(stat = "identity", aes(text = paste("Number of properties:", num_put_id, "<br>Illegal deforestation (ha):", round(sum_df_ha)))) +
+      scale_fill_gradientn(colors = pyforest_palette) +
+      ggtitle("Illegal Deforestation by Department") +
+      xlab("Illegal Deforestation (hectares)") +
+      ylab("Department") +
+      theme_bw() +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            legend.position = "right") +
+      labs(fill = "Illegal Deforestation")
+  }
+  p <- ggplotly(p, tooltip = "text")
+  p <- layout(p, hoverlabel = list(bgcolor = "white"))  # Add this line to set the tooltip background to white
+  return(p)
+})
+
+
+output$areaPlot <- renderPlotly({
+  # Convert year_range to factor or character
+  combined_illegal_df_by_dist$year_range <- factor(combined_illegal_df_by_dist$year_range, levels = rev(unique(combined_illegal_df_by_dist$year_range)))
+
+  # Plot the data with reversed x-axis labels and values
+  p <- ggplot(combined_illegal_df_by_dist, aes(x = year_range, y = sum_df_ha, group = 1)) +
+    geom_area(fill = "#33658A", alpha = 0.3) +
+    geom_point(color = "#33658A", size = 1) +
+    scale_x_discrete(limits = rev(levels(combined_illegal_df_by_dist$year_range)), labels = rev(levels(combined_illegal_df_by_dist$year_range))) +
+    labs(title = "Change in Illegal Deforestation (ha) Over Time",
+         x = "Time Frame", y = "Illegal Deforestation (ha)") +
+    facet_wrap(~ nom_dist, ncol = 2, scales = "free") +
+    theme_minimal()
+  
+  ggplotly(p)
+})
+
+
+}
+
+# Run the Shiny app
+shinyApp(ui, server)
+```
+
+
+```{r}
+# # Create Server
+# server <- function(input, output) {
+#   
+#   # Function to filter data by year range
+#   filter_data <- function(data) {
+#     data %>% filter(year_range == input$year_range)
+#   }
+#   
+#   output$leafdown <- renderLeaflet({
+#     data <- filter_data(combined_illegal_df_by_dpto)
+#     leaflet() %>%
+#       addProviderTiles("CartoDB.Positron") %>%
+#       addPolygons(
+#         data = data,
+#         fillColor = ~my_palette_dpto(data$sum_df_ha),
+#         fillOpacity = 0.8,
+#         color = "#BDBDC3",
+#         weight = 1,
+#         opacity = 1,
+#         highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+#                   label = paste0(
+#             "District: ", data$nom_dpto,
+#             "<br>Illegal Deforestation: ", round(data$sum_df_ha), " ha",
+#             "<br>Number of properties: ", data$num_put_id,
+#             "<br>Number of properties with illegal deforestation: ", data$num_illegal_props 
+#           ) %>% lapply(HTML)
+#       ) %>%
+#       addLegend(
+#         pal = my_palette_dpto,
+#         values = data$sum_df_ha,
+#         title = "Illegal Deforestation (hectares)",
+#         position = "bottomright"
+#       )
+#   })
+# 
+#   observeEvent(input$drill_down, {
+#     data <- filter_data(combined_illegal_df_by_dist)
+#     output$leafdown <- renderLeaflet({
+#       leaflet() %>%
+#         addProviderTiles("CartoDB.Positron") %>%
+#         addPolygons(
+#           data = data,
+#           fillColor = ~my_palette_dist(data$sum_df_ha),
+#           fillOpacity = 0.8,
+#           color = "#BDBDC3",
+#           weight = 1,
+#           opacity = 1,
+#           highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+#           label = paste0(
+#             "District: ", data$nom_dist,
+#             "<br>Illegal Deforestation: ", round(data$sum_df_ha), " ha",
+#             "<br>Number of properties: ", data$num_put_id,
+#             "<br>Number of properties with illegal deforestation: ", data$num_illegal_props 
+#           ) %>% lapply(HTML)
+#         ) %>%
+#         addLegend(
+#           pal = my_palette_dist,
+#           values = data$sum_df_ha,
+#           title = "Illegal Deforestation (hectares)",
+#           position = "bottomright"
+#         )
+#     })
+#   })
+# 
+#   observeEvent(input$drill_up, {
+#     data <- filter_data(combined_illegal_df_by_dpto)
+#     output$leafdown <- renderLeaflet({
+#       leaflet() %>%
+#         addProviderTiles("CartoDB.Positron") %>%
+#         addPolygons(
+#           data = data,
+#           fillColor = ~my_palette_dpto(data$sum_df_ha),
+#           fillOpacity = 0.8,
+#           color = "#BDBDC3",
+#           weight = 1,
+#           opacity = 1,
+#           highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+#           label = paste0(
+#             "District: ", data$nom_dpto,
+#             "<br>Illegal Deforestation: ", round(data$sum_df_ha), " ha",
+#             "<br>Number of properties: ", data$num_put_id,
+#             "<br>Number of properties with illegal deforestation: ", data$num_illegal_props 
+#           ) %>% lapply(HTML)
+#         ) %>%
+#         addLegend(
+#           pal = my_palette_dpto,
+#           values = data$sum_df_ha,
+#           title = "Illegal Deforestation (hectares)",
+#           position = "bottomright"
+#         )
+#     })
+#   })
+# }
+# 
+# # Run the Shiny app
+# shinyApp(ui, server)
+
+
+```
+
+
+
+
+
+
+
+
+

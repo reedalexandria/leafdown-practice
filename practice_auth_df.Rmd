@@ -1,0 +1,160 @@
+---
+title: "practice_auth_df"
+author: "Alex Reed"
+date: "2023-05-21"
+output: html_document
+---
+
+```{r}
+# Load packages
+library(sf)
+library(tidyverse)
+library(terra) 
+library(tmap)
+library(leaflet.extras)
+library(ggplot2)
+library(exactextractr)
+library(units)
+library(tictoc)
+library(grDevices)
+library(plotly)
+library(forcats)
+library(RColorBrewer)
+library(htmltools) #don't think I am using
+library(maps)
+library(maptools)
+library(sp)
+library(ggiraph)
+library(ggiraphExtra)
+
+#leafdown
+library(leafdown)
+library(leaflet)
+library(shiny)
+library(dplyr)
+library(shinycssloaders)
+library(shinyjs)
+library(dplyr)
+library(raster)
+```
+
+```{r}
+combined_auth_df_by_dist <- read_rds("~/../../capstone/pyforest/lup_assessment_data/compliance_results/combined_auth_df_by_dist.rds")
+combined_auth_df_by_dpto <- read_rds("~/../../capstone/pyforest/lup_assessment_data/compliance_results/combined_auth_df_by_dpto.rds")
+
+combined_auth_df_by_dist <- st_transform(combined_auth_df_by_dist, crs = "+proj=longlat +datum=WGS84")
+combined_auth_df_by_dpto  <- st_transform(combined_auth_df_by_dpto, crs = "+proj=longlat +datum=WGS84")
+```
+
+
+```{r}
+ui <- fluidPage(
+  tags$style(HTML(".leaflet-container {background: #ffffff;}")),
+  actionButton("drill_up", "View Departments"),
+  actionButton("drill_down", "View Districts"),
+  selectInput("year_range", "Select Year Range", unique(combined_auth_df_by_dpto$year_range)),
+  leafletOutput("leafdown", height = "600px")
+)
+
+```
+
+
+```{r}
+pyforest_palette <- c("#4B5F43", "#AEBD93", "#F6AE2D", "#F26419")
+```
+
+```{r}
+# Create Server
+server <- function(input, output) {
+  
+  # Function to filter data by year range
+  filter_data <- function(data) {
+    data %>% filter(year_range == input$year_range)
+  }
+
+  data_reactive <- reactive({
+    if (input$drill_down == 0 && input$drill_up == 0) {
+      filter_data(combined_auth_df_by_dpto)
+    } else if (input$drill_down > 0) {
+      filter_data(combined_auth_df_by_dist)
+    } else {
+      filter_data(combined_auth_df_by_dpto)
+    }
+  })
+
+  output$leafdown <- renderLeaflet({
+    data <- data_reactive()
+    my_palette_dpto <- colorNumeric(palette = pyforest_palette, domain = data$sum_df_ha)
+    leaflet() %>%
+      addProviderTiles("CartoDB.Positron") %>%
+      addPolygons(
+        data = data,
+        fillColor = ~my_palette_dpto(data$sum_df_ha),
+        fillOpacity = 0.8,
+        color = "#BDBDC3",
+        weight = 1,
+        opacity = 1,
+        highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+        label = ~paste0(
+          "Department: ", nom_dpto,
+          "<br>Authorized Deforestation: ", round(sum_df_ha), " ha",
+          "<br>Remaining hectares authorized to be deforested: ", round(sum_remaining_df_area_ha), " ha",
+          "<br>Number of properties: ", num_put_id
+        ) %>% lapply(HTML)
+      ) %>%
+      addLegend(
+        pal = my_palette_dpto,
+        values = data$sum_df_ha,
+        title = "Authorized Deforestation (ha)",
+        position = "bottomright"
+      )
+  })
+
+  observeEvent(input$drill_down, {
+    data <- data_reactive()
+    my_palette_dist <- colorNumeric(palette = pyforest_palette, domain = data$sum_df_ha)
+    leafletProxy("leafdown") %>% clearShapes() %>%
+      addPolygons(
+        data = data,
+        fillColor = ~my_palette_dist(data$sum_df_ha),
+        fillOpacity = 0.8,
+        color = "#BDBDC3",
+        weight = 1,
+        opacity = 1,
+        highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+        label = ~paste0(
+          "District: ", nom_dist,
+          "<br>Authorized Deforestation: ", round(sum_df_ha), " ha",
+          "<br>Remaining hectares authorized to be deforested: ", round(sum_remaining_df_area_ha), " ha",
+          "<br>Number of properties: ", num_put_id
+        ) %>% lapply(HTML)
+      )
+  })
+
+  observeEvent(input$drill_up, {
+    data <- data_reactive()
+    my_palette_dpto <- colorNumeric(palette = pyforest_palette, domain = data$sum_df_ha)
+    leafletProxy("leafdown") %>% clearShapes() %>%
+      addPolygons(
+        data = data,
+        fillColor = ~my_palette_dpto(data$sum_df_ha),
+        fillOpacity = 0.8,
+        color = "#BDBDC3",
+        weight = 1,
+        opacity = 1,
+        highlightOptions = highlightOptions(color = "white", weight = 2, bringToFront = TRUE),
+        label = ~paste0(
+          "Department: ", nom_dpto,
+          "<br>Authorized Deforestation: ", round(sum_df_ha), " ha",
+          "<br>Remaining hectares authorized to be deforested: ", round(sum_remaining_df_area_ha), " ha",
+          "<br>Number of properties: ", num_put_id
+        ) %>% lapply(HTML)
+      )
+  })
+}
+
+# Run the Shiny app
+shinyApp(ui, server)
+```
+
+
